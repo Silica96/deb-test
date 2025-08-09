@@ -112,14 +112,16 @@ jobs:
       # 6. 새로 빌드된 패키지를 저장소에 추가합니다. (수정된 부분)
       - name: Update repository and add new package
         run: |
-          # [핵심 수정] 패키지를 추가하기 전에 'export'를 먼저 실행합니다.
-          # 이 명령은 conf/distributions 파일을 기준으로 저장소의 메타데이터와 디렉토리 구조를
-          # 먼저 업데이트하여 상태 불일치 문제를 해결합니다.
-          echo "Updating repository structure with 'export'..."
-          reprepro --basedir ./repo_dir -V export
+          # [핵심 수정] 이전 실행에서 남은 불일치 상태를 방지하기 위해
+          # 기존의 메타데이터(dists)와 데이터베이스(db) 디렉토리를 깨끗하게 삭제합니다.
+          # pool 디렉토리는 이전 패키지들을 보존하기 위해 그대로 둡니다.
+          echo "Cleaning up previous metadata and database..."
+          rm -rf repo_dir/dists repo_dir/db
 
-          # 상태가 동기화된 저장소에 새로운 패키지를 안전하게 추가합니다.
-          echo "Adding new package with 'includedeb'..."
+          # 이제 깨끗한 상태에서 새로운 패키지를 추가합니다.
+          # reprepro는 conf/distributions 설정을 읽어 필요한 모든 메타데이터 파일을
+          # 처음부터 올바르게 다시 생성합니다.
+          echo "Adding new package to a clean state..."
           reprepro --basedir ./repo_dir -V includedeb stable ./new_package/*.deb
 
       # 7. 업데이트된 전체 저장소 디렉토리를 Pages 아티팩트로 업로드합니다.
