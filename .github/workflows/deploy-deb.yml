@@ -56,26 +56,41 @@ jobs:
           name: deb-package
           path: ${{ steps.build_package.outputs.deb_filename }}
 
-  # --- 잡 2: APT 저장소 배포 (셸 명령어로 수정됨) ---
+  # --- 잡 2: APT 저장소 배포 (상태 유지 로직으로 수정됨) ---
   deploy:
     name: Deploy APT Repository
     needs: build  # 'build' 잡이 성공해야 실행됨
     permissions:
       pages: write      # GitHub Pages에 배포하기 위한 권한
       id-token: write   # OIDC 토큰을 사용한 인증을 위한 권한
+      contents: read    # 기존 저장소 상태를 가져오기 위해 브랜치를 체크아웃할 권한
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Download.deb artifact
+      # 1. 이전 잡에서 빌드한 새로운 .deb 패키지를 다운로드합니다.
+      - name: Download .deb artifact
         uses: actions/download-artifact@v4
         with:
           name: deb-package
+          path: ./new_package # 임시 하위 디렉토리에 다운로드
 
+      # 2. 현재 배포된 GitHub Pages의 내용을 체크아웃하여 기존 저장소 상태를 가져옵니다.
+      #    결과물은 'repo_dir' 디렉토리에 저장됩니다.
+      #    최초 실행 시 gh-pages 브랜치가 없을 수 있으므로 오류가 발생해도 계속 진행합니다.
+      - name: Checkout existing gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: repo_dir
+        continue-on-error: true
+
+      # 3. 데비안 저장소 관리 도구인 reprepro를 설치합니다.
       - name: Install reprepro
         run: sudo apt-get update && sudo apt-get install -y reprepro
 
+      # 4. 저장소 서명을 위해 GitHub Secrets에 저장된 GPG 개인키를 가져옵니다.
       - name: Import GPG Key
         id: import_gpg
         uses: crazy-max/ghaction-import-gpg@v6
@@ -84,14 +99,16 @@ jobs:
           # 키에 암호가 있는 경우 아래 줄의 주석을 해제하고 GitHub Secret에 GPG_PASSPHRASE를 추가하세요.
           # passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
-      - name: Create repository using reprepro
+      # 5. 저장소 구조와 설정 파일을 준비합니다.
+      #    이 단계는 최초 실행을 포함하여 항상 필요한 디렉토리와 설정 파일이 있도록 보장합니다.
+      - name: Prepare repository structure
         run: |
-          # 최종적으로 GitHub Pages에 배포될 디렉토리를 생성합니다.
-          mkdir -p public_repo/conf
-
+          # 기본 디렉토리와 conf 하위 디렉토리가 존재하는지 확인하고 없으면 생성합니다.
+          mkdir -p repo_dir/conf
+          
           # reprepro 설정 파일을 동적으로 생성합니다.
-          # SignWith 값에 GitHub Secrets에서 가져온 GPG 키의 ID를 주입합니다.
-          cat <<EOF > public_repo/conf/distributions
+          # 이 과정에서 이전 스텝에서 가져온 GPG 키 ID를 주입하여 서명을 활성화합니다.
+          cat <<EOF > repo_dir/conf/distributions
           Origin: ${{ github.repository_owner }}
           Label: ${{ github.event.repository.name }}
           Codename: stable
@@ -101,20 +118,19 @@ jobs:
           SignWith: ${{ steps.import_gpg.outputs.keyid }}
           EOF
 
-          echo "--- Generated distributions file: ---"
-          cat public_repo/conf/distributions
-          echo "------------------------------------"
+      # 6. 새로 빌드된 패키지를 저장소에 추가합니다.
+      #    reprepro는 'repo_dir' 안의 데이터베이스를 업데이트하고 새로운 .deb 파일을 pool에 추가합니다.
+      - name: Add new package to repository
+        run: |
+          reprepro --basedir ./repo_dir -V includedeb stable ./new_package/*.deb
 
-          # 다운로드한 .deb 패키지를 저장소에 추가합니다.
-          # reprepro는 자동으로 pool과 dists 디렉토리를 생성하고 메타데이터 파일을 업데이트 및 서명합니다.
-          reprepro --basedir ./public_repo -V includedeb stable ./*.deb
-
+      # 7. 업데이트된 전체 저장소 디렉토리를 Pages 아티팩트로 업로드합니다.
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # reprepro가 생성한 디렉토리 전체를 아티팩트로 업로드합니다.
-          path: './public_repo'
+          path: ./repo_dir
 
+      # 8. 업로드된 아티팩트를 GitHub Pages에 배포합니다.
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
