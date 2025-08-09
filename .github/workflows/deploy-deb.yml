@@ -95,7 +95,7 @@ jobs:
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
 
-      # 5. 저장소 구조와 설정 파일을 준비합니다.
+      # 5. 저장소 구조와 설정 파일을 준비합니다. (수정된 부분)
       - name: Prepare repository structure
         run: |
           mkdir -p repo_dir/conf
@@ -104,23 +104,21 @@ jobs:
           Label: ${{ github.event.repository.name }}
           Codename: stable
           Components: main
-          Architectures: amd64 all
+          # [핵심 수정] 'all' 아키텍처를 먼저 명시하여 부트스트랩 문제를 해결합니다.
+          Architectures: all amd64
           Description: APT repository for ${{ github.event.repository.name }}
           SignWith: ${{ steps.import_gpg.outputs.keyid }}
           EOF
 
-      # 6. 새로 빌드된 패키지를 저장소에 추가합니다. (수정된 부분)
+      # 6. 새로 빌드된 패키지를 저장소에 추가합니다.
       - name: Update repository and add new package
         run: |
-          # [핵심 수정] 이전 실행에서 남은 불일치 상태를 방지하기 위해
+          # 이전 실행에서 남은 불일치 상태를 방지하기 위해
           # 기존의 메타데이터(dists)와 데이터베이스(db) 디렉토리를 깨끗하게 삭제합니다.
-          # pool 디렉토리는 이전 패키지들을 보존하기 위해 그대로 둡니다.
           echo "Cleaning up previous metadata and database..."
           rm -rf repo_dir/dists repo_dir/db
 
           # 이제 깨끗한 상태에서 새로운 패키지를 추가합니다.
-          # reprepro는 conf/distributions 설정을 읽어 필요한 모든 메타데이터 파일을
-          # 처음부터 올바르게 다시 생성합니다.
           echo "Adding new package to a clean state..."
           reprepro --basedir ./repo_dir -V includedeb stable ./new_package/*.deb
 
@@ -134,3 +132,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
