@@ -10,35 +10,63 @@ jobs:
   build:
     name: Build Debian Package
     runs-on: ubuntu-latest
+    outputs:
+      deb_filename: ${{ steps.build_package.outputs.deb_filename }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Prepare build directory
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential debhelper devscripts
+          # dpkg-deb가 요구하는 구조로 빌드 디렉토리를 생성합니다.
+          mkdir -p build_dir/usr/bin
+          mkdir -p build_dir/etc
+          
+          # 리포지토리의 파일들을 빌드 디렉토리 안의 최종 설치 경로로 복사합니다.
+          cp bin/test.sh build_dir/usr/bin/
+          cp etc/test.conf build_dir/etc/
+          
+          # DEBIAN 디렉토리와 그 안의 control 파일을 복사합니다.
+          cp -r DEBIAN build_dir/
 
-      - name: Build the package
-        # -us -uc: 소스 및 변경사항 파일에 서명하지 않음
-        # -b: 바이너리 패키지만 빌드
-        run: dpkg-buildpackage -us -uc -b
+          # 실행 파일에 실행 권한을 부여합니다.
+          chmod +x build_dir/usr/bin/test.sh
+
+      - name: Build the package with dpkg-deb
+        id: build_package
+        run: |
+          # DEBIAN/control 파일에서 패키지 이름과 버전을 동적으로 읽어옵니다.
+          PACKAGE_NAME=$(grep -oP '^Package: \K.*' DEBIAN/control | tr -d '[:space:]')
+          PACKAGE_VERSION=$(grep -oP '^Version: \K.*' DEBIAN/control | tr -d '[:space:]')
+          ARCHITECTURE=$(grep -oP '^Architecture: \K.*' DEBIAN/control | tr -d '[:space:]')
+          
+          # 최종.deb 파일 이름을 생성합니다.
+          DEB_FILENAME="${PACKAGE_NAME}_${PACKAGE_VERSION}_${ARCHITECTURE}.deb"
+          echo "Building package as: ${DEB_FILENAME}"
+          
+          # dpkg-deb 명령으로 패키지를 빌드합니다.
+          dpkg-deb --build build_dir "${DEB_FILENAME}"
+
+          # 다음 잡에서 파일 이름을 사용할 수 있도록 output으로 설정합니다.
+          echo "deb_filename=${DEB_FILENAME}" >> "$GITHUB_OUTPUT"
 
       - name: Upload.deb artifact
         uses: actions/upload-artifact@v4
         with:
           name: deb-package
-          path: ../*.deb
+          path: ${{ steps.build_package.outputs.deb_filename }}
 
-  # --- 잡 2: APT 저장소 배포 ---
+  # --- 잡 2: APT 저장소 배포 (이전과 동일) ---
   deploy:
     name: Deploy APT Repository
     needs: build  # 'build' 잡이 성공해야 실행됨
     permissions:
       pages: write      # GitHub Pages에 배포하기 위한 권한
       id-token: write   # OIDC 토큰을 사용한 인증을 위한 권한
-      contents: read    # 리포지토리 코드를 체크아웃하기 위한 권한
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout repository for public key
         uses: actions/checkout@v4
@@ -51,20 +79,18 @@ jobs:
       - name: Create APT Repository
         uses: morph027/apt-repo-action@v2
         with:
-          repo-name: deb-test
           scan-dir: .
           signing-key: ${{ secrets.GPG_PRIVATE_KEY }}
           codename: stable
           components: main
           architectures: all
-          # 기존 저장소의 상태를 유지하기 위해 현재 배포된 페이지에서 패키지 목록을 가져옴
           import-from-repo-url: |
             deb-all https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ stable main
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'apt-repo/repo' # morph027/apt-repo-action의 기본 출력 디렉토리
+          path: 'apt-repo/repo'
 
       - name: Deploy to GitHub Pages
         id: deployment
