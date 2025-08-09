@@ -1,0 +1,7 @@
+Origin: Silica96
+Label: deb-test
+Codename: stable
+Architectures: amd64 arm64 armhf i386
+Components: main
+Description: APT repository for deb-test
+SignWith: 8039ABE900B344F4

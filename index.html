@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>APT Repository - deb-test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        pre { background: #f4f4f4; padding: 10px; border-radius: 5px; }
+        code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>APT Repository for deb-test</h1>
+    
+    <h2>Quick Setup</h2>
+    <pre>
+# Add GPG key
+curl -fsSL https://Silica96.github.io/deb-test/public.key | sudo apt-key add -
+
+# Add repository
+echo "deb https://Silica96.github.io/deb-test/ stable main" | sudo tee /etc/apt/sources.list.d/deb-test.list
+
+# Install package
+sudo apt update
+sudo apt install 
+    </pre>
+    
+    <h2>Browse</h2>
+    <ul>
+        <li><a href="pool/">Package Pool</a></li>
+        <li><a href="dists/">Distributions</a></li>
+        <li><a href="public.key">GPG Public Key</a></li>
+    </ul>
+    
+    <p><small>Last updated: Sat Aug  9 08:42:04 UTC 2025</small></p>
+</body>
+</html>

@@ -1,0 +1,5 @@
+Component: main
+Origin: Silica96
+Label: deb-test
+Architecture: amd64
+Description: APT repository for deb-test
