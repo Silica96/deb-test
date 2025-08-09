@@ -140,8 +140,16 @@ jobs:
           
           # 저장소가 이미 존재하는지 확인
           if [ -d "pool" ] && [ -d "dists" ]; then
-            echo "Repository exists, adding new version..."
-            # 새 패키지 추가 (이전 버전은 유지)
+            echo "Repository exists, updating..."
+            
+            # 동일한 버전이 이미 있는지 확인
+            if reprepro list stable | grep -q "${PACKAGE_NAME}_${PACKAGE_VERSION}"; then
+              echo "Version ${PACKAGE_VERSION} already exists. Removing old version first..."
+              # 기존 버전 제거
+              reprepro -V remove stable ${PACKAGE_NAME} ${PACKAGE_VERSION}
+            fi
+            
+            # 새 패키지 추가
             reprepro -V includedeb stable "${DEB_FILENAME}"
           else
             echo "Creating new repository..."
