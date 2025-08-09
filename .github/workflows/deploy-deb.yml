@@ -97,7 +97,7 @@ jobs:
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           # 키에 암호가 있는 경우 아래 줄의 주석을 해제하고 GitHub Secret에 GPG_PASSPHRASE를 추가하세요.
-          # passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
       # 5. 저장소 구조와 설정 파일을 준비합니다.
       #    이 단계는 최초 실행을 포함하여 항상 필요한 디렉토리와 설정 파일이 있도록 보장합니다.
