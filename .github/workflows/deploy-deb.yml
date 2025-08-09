@@ -2,181 +2,244 @@ name: Build and Deploy Debian Package
 
 on:
   push:
-    branches:
-      - main  # 'main' 브랜치에 푸시될 때 워크플로우 실행
+    branches: [ main ]
+  workflow_dispatch:  # 수동 실행 가능
 
 jobs:
-  # --- 잡 1: 데비안 패키지 빌드 ---
-  build:
-    name: Build Debian Package
+  build-and-deploy:
     runs-on: ubuntu-latest
-    outputs:
-      deb_filename: ${{ steps.build_package.outputs.deb_filename }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Prepare build directory
-        run: |
-          # dpkg-deb가 요구하는 구조로 빌드 디렉토리를 생성합니다.
-          mkdir -p build_dir/usr/bin
-          mkdir -p build_dir/etc
-          
-          # 리포지토리의 파일들을 빌드 디렉토리 안의 최종 설치 경로로 복사합니다.
-          cp bin/test.sh build_dir/usr/bin/
-          cp etc/test.conf build_dir/etc/
-          
-          # DEBIAN 디렉토리와 그 안의 control 파일을 복사합니다.
-          cp -r DEBIAN build_dir/
-
-          # 실행 파일에 실행 권한을 부여합니다.
-          chmod +x build_dir/usr/bin/test.sh
-
-      - name: Build the package with dpkg-deb
-        id: build_package
-        run: |
-          # DEBIAN/control 파일에서 패키지 이름과 버전을 동적으로 읽어옵니다.
-          PACKAGE_NAME=$(grep -oP '^Package: \K.*' DEBIAN/control | tr -d '[:space:]')
-          PACKAGE_VERSION=$(grep -oP '^Version: \K.*' DEBIAN/control | tr -d '[:space:]')
-          ARCHITECTURE=$(grep -oP '^Architecture: \K.*' DEBIAN/control | tr -d '[:space:]')
-          
-          # 최종.deb 파일 이름을 생성합니다.
-          DEB_FILENAME="${PACKAGE_NAME}_${PACKAGE_VERSION}_${ARCHITECTURE}.deb"
-          echo "Building package as: ${DEB_FILENAME}"
-          
-          # dpkg-deb 명령으로 패키지를 빌드합니다.
-          dpkg-deb --build build_dir "${DEB_FILENAME}"
-
-          # 다음 잡에서 파일 이름을 사용할 수 있도록 output으로 설정합니다.
-          echo "deb_filename=${DEB_FILENAME}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload.deb artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deb-package
-          path: ${{ steps.build_package.outputs.deb_filename }}
-
-  # --- 잡 2: APT 저장소 배포 (GPG 패스프레이즈 포함) ---
-  deploy:
-    name: Deploy APT Repository
-    needs: build  # 'build' 잡이 성공해야 실행됨
     permissions:
-      pages: write      # GitHub Pages에 배포하기 위한 권한
-      id-token: write   # OIDC 토큰을 사용한 인증을 위한 권한
-      contents: read    # 기존 저장소 상태를 가져오기 위해 브랜치를 체크아웃할 권한
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      contents: write
+      pages: write
+      id-token: write
+      
     steps:
-      # 1. 이전 잡에서 빌드한 새로운 .deb 패키지를 다운로드합니다.
-      - name: Download .deb artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: deb-package
-          path: ./new_package # 임시 하위 디렉토리에 다운로드
-
-      # 2. 현재 배포된 GitHub Pages의 내용을 체크아웃하여 기존 저장소 상태를 가져옵니다.
-      - name: Checkout existing gh-pages branch
+      # 1. 코드 체크아웃
+      - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-          path: repo_dir
-        continue-on-error: true
-
-      # 3. 데비안 저장소 관리 도구인 reprepro를 설치합니다.
-      - name: Install reprepro
-        run: sudo apt-get update && sudo apt-get install -y reprepro
-
-      # 4. 저장소 서명을 위해 GitHub Secrets에 저장된 GPG 개인키를 가져옵니다.
-      - name: Import GPG Key
+        
+      # 2. 필요한 도구 설치
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev reprepro
+          
+      # 3. GPG 키 가져오기 (비밀번호 없는 키)
+      - name: Import GPG key
         id: import_gpg
         uses: crazy-max/ghaction-import-gpg@v6
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.GPG_PASSPHRASE }}  # 패스프레이즈 추가
-          git_user_signingkey: false  # Git 서명은 불필요
-          git_commit_gpgsign: false   # 커밋 서명 비활성화
           
-      # 4-1. GPG를 비대화형 모드로 설정
-      - name: Configure GPG for non-interactive mode
+      # 4. 빌드 스크립트 생성 및 실행
+      - name: Build Debian package
         run: |
-          # GPG 디렉토리 확인 및 생성
-          mkdir -p ~/.gnupg
-          chmod 700 ~/.gnupg
+          #!/bin/bash
+          set -e
           
-          # 기존 설정 파일 백업 및 새로 생성
-          if [ -f ~/.gnupg/gpg-agent.conf ]; then
-            mv ~/.gnupg/gpg-agent.conf ~/.gnupg/gpg-agent.conf.bak
+          echo "=== Starting Debian package build ==="
+          
+          # DEBIAN/control에서 패키지 정보 추출
+          PACKAGE_NAME=$(grep '^Package:' DEBIAN/control | awk '{print $2}')
+          PACKAGE_VERSION=$(grep '^Version:' DEBIAN/control | awk '{print $2}')
+          PACKAGE_ARCH=$(grep '^Architecture:' DEBIAN/control | awk '{print $2}')
+          
+          echo "Building: ${PACKAGE_NAME}_${PACKAGE_VERSION}_${PACKAGE_ARCH}"
+          
+          # 패키지 구조 생성
+          BUILD_DIR="build_${PACKAGE_NAME}"
+          rm -rf "${BUILD_DIR}"
+          mkdir -p "${BUILD_DIR}"
+          
+          # DEBIAN 디렉토리 복사
+          cp -r DEBIAN "${BUILD_DIR}/"
+          
+          # 파일 복사 (디렉토리 구조 유지)
+          if [ -d "usr" ]; then
+            cp -r usr "${BUILD_DIR}/"
           fi
           
-          if [ -f ~/.gnupg/gpg.conf ]; then
-            mv ~/.gnupg/gpg.conf ~/.gnupg/gpg.conf.bak
+          if [ -d "etc" ]; then
+            cp -r etc "${BUILD_DIR}/"
           fi
           
-          # GPG 에이전트 설정 생성
-          cat > ~/.gnupg/gpg-agent.conf <<EOF
-          default-cache-ttl 7200
-          max-cache-ttl 31536000
-          allow-loopback-pinentry
-          EOF
+          if [ -d "bin" ]; then
+            mkdir -p "${BUILD_DIR}/usr/bin"
+            cp -r bin/* "${BUILD_DIR}/usr/bin/"
+            chmod +x "${BUILD_DIR}/usr/bin/"*
+          fi
           
-          # GPG 설정 생성
-          cat > ~/.gnupg/gpg.conf <<EOF
-          use-agent
-          pinentry-mode loopback
-          EOF
+          # .deb 파일 빌드
+          DEB_FILENAME="${PACKAGE_NAME}_${PACKAGE_VERSION}_${PACKAGE_ARCH}.deb"
+          dpkg-deb --build "${BUILD_DIR}" "${DEB_FILENAME}"
           
-          # 권한 설정
-          chmod 600 ~/.gnupg/gpg-agent.conf
-          chmod 600 ~/.gnupg/gpg.conf
+          echo "Package built: ${DEB_FILENAME}"
+          echo "DEB_FILENAME=${DEB_FILENAME}" >> $GITHUB_ENV
           
-          # GPG 에이전트 재시작 (에러 무시)
-          gpgconf --kill gpg-agent || true
-          gpg-agent --daemon --allow-loopback-pinentry || true
-          
-          # GPG 설정 확인 (디버깅용)
-          echo "GPG Configuration:"
-          gpg --version
-          echo "Available keys:"
-          gpg --list-secret-keys --keyid-format LONG || true
-
-      # 5. 저장소 구조와 설정 파일을 준비합니다.
-      - name: Prepare repository structure
+      # 5. gh-pages 브랜치 체크아웃 또는 생성
+      - name: Prepare gh-pages branch
         run: |
-          mkdir -p repo_dir/conf
-          cat <<EOF > repo_dir/conf/distributions
-          Origin: ${{ github.repository_owner }}
-          Label: ${{ github.event.repository.name }}
+          #!/bin/bash
+          set -e
+          
+          # gh-pages 브랜치 체크아웃 시도
+          git fetch origin gh-pages:gh-pages 2>/dev/null || true
+          
+          if git show-ref --verify --quiet refs/heads/gh-pages; then
+            echo "gh-pages branch exists, checking out..."
+            git checkout gh-pages
+            # main 브랜치의 최신 .deb 파일 가져오기
+            git checkout main -- *.deb 2>/dev/null || true
+          else
+            echo "Creating new gh-pages branch..."
+            git checkout --orphan gh-pages
+            # 모든 파일 제거 (새 브랜치이므로)
+            git rm -rf . 2>/dev/null || true
+          fi
+          
+      # 6. APT 저장소 생성/업데이트
+      - name: Create/Update APT repository
+        run: |
+          #!/bin/bash
+          set -e
+          
+          echo "=== Setting up APT repository ==="
+          
+          # reprepro 설정 디렉토리 생성
+          mkdir -p conf
+          
+          # distributions 파일 생성
+          cat > conf/distributions <<EOF
+          Origin: ${GITHUB_REPOSITORY_OWNER}
+          Label: ${GITHUB_REPOSITORY##*/}
           Codename: stable
+          Architectures: amd64 arm64 armhf i386
           Components: main
-          Architectures: amd64 i386 arm64 armhf
-          Description: APT repository for ${{ github.event.repository.name }}
+          Description: APT repository for ${GITHUB_REPOSITORY##*/}
           SignWith: ${{ steps.import_gpg.outputs.keyid }}
           EOF
-
-      # 6. 새로 빌드된 패키지를 저장소에 추가합니다.
-      - name: Update repository and add new package
-        run: |
-          # 이전 실행에서 남은 불일치 상태를 방지하기 위해
-          # 기존의 메타데이터(dists)와 데이터베이스(db) 디렉토리를 깨끗하게 삭제합니다.
-          echo "Cleaning up previous metadata and database..."
-          rm -rf repo_dir/dists repo_dir/db
-
-          # GPG 패스프레이즈를 환경변수로 설정
-          export GPG_TTY=$(tty)
           
-          # 이제 깨끗한 상태에서 새로운 패키지를 추가합니다.
-          echo "Adding new package to a clean state..."
-          reprepro --basedir ./repo_dir -V includedeb stable ./new_package/*.deb
-
-      # 7. 업데이트된 전체 저장소 디렉토리를 Pages 아티팩트로 업로드합니다.
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./repo_dir
-
-      # 8. 업로드된 아티팩트를 GitHub Pages에 배포합니다.
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          # 이전 저장소 상태 정리 (있는 경우)
+          if [ -d "db" ] || [ -d "dists" ] || [ -d "pool" ]; then
+            echo "Cleaning previous repository state..."
+            rm -rf db dists pool
+          fi
+          
+          # 패키지 추가
+          echo "Adding package to repository..."
+          reprepro -V includedeb stable "${DEB_FILENAME}"
+          
+          # 저장소 export (메타데이터 생성)
+          reprepro -V export
+          
+          echo "Repository created/updated successfully"
+          
+      # 7. Public GPG 키 추가 (사용자가 저장소를 신뢰할 수 있도록)
+      - name: Export public GPG key
+        run: |
+          gpg --armor --export ${{ steps.import_gpg.outputs.keyid }} > public.key
+          echo "Public GPG key exported to public.key"
+          
+      # 8. README 생성 (저장소 사용 방법)
+      - name: Create README
+        run: |
+          cat > README.md <<EOF
+          # APT Repository for ${GITHUB_REPOSITORY##*/}
+          
+          ## Usage
+          
+          1. Add the GPG key:
+          \`\`\`bash
+          curl -fsSL https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/public.key | sudo apt-key add -
+          \`\`\`
+          
+          2. Add the repository:
+          \`\`\`bash
+          echo "deb https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/ stable main" | sudo tee /etc/apt/sources.list.d/${GITHUB_REPOSITORY##*/}.list
+          \`\`\`
+          
+          3. Update and install:
+          \`\`\`bash
+          sudo apt update
+          sudo apt install ${PACKAGE_NAME}
+          \`\`\`
+          
+          ## Available Packages
+          
+          - ${DEB_FILENAME}
+          
+          Last updated: $(date)
+          EOF
+          
+      # 9. GitHub Pages 설정을 위한 index.html 생성
+      - name: Create index.html
+        run: |
+          cat > index.html <<EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>APT Repository - ${GITHUB_REPOSITORY##*/}</title>
+              <style>
+                  body { font-family: Arial, sans-serif; margin: 40px; }
+                  pre { background: #f4f4f4; padding: 10px; border-radius: 5px; }
+                  code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+              </style>
+          </head>
+          <body>
+              <h1>APT Repository for ${GITHUB_REPOSITORY##*/}</h1>
+              
+              <h2>Quick Setup</h2>
+              <pre>
+          # Add GPG key
+          curl -fsSL https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/public.key | sudo apt-key add -
+          
+          # Add repository
+          echo "deb https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/ stable main" | sudo tee /etc/apt/sources.list.d/${GITHUB_REPOSITORY##*/}.list
+          
+          # Install package
+          sudo apt update
+          sudo apt install ${PACKAGE_NAME}
+              </pre>
+              
+              <h2>Browse</h2>
+              <ul>
+                  <li><a href="pool/">Package Pool</a></li>
+                  <li><a href="dists/">Distributions</a></li>
+                  <li><a href="public.key">GPG Public Key</a></li>
+              </ul>
+              
+              <p><small>Last updated: $(date)</small></p>
+          </body>
+          </html>
+          EOF
+          
+      # 10. 변경사항 커밋 및 푸시
+      - name: Commit and push to gh-pages
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          git add .
+          git commit -m "Update APT repository: ${DEB_FILENAME}" || echo "No changes to commit"
+          git push origin gh-pages
+          
+      # 11. GitHub Pages 활성화
+      - name: Enable GitHub Pages
+        run: |
+          # GitHub Pages 설정 (API 사용)
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages" \
+            -d '{"source":{"branch":"gh-pages","path":"/"}}' \
+            2>/dev/null || echo "GitHub Pages might already be enabled"
+            
+      # 12. 완료 메시지
+      - name: Display completion message
+        run: |
+          echo "=========================================="
+          echo "✅ Deployment Complete!"
+          echo "=========================================="
+          echo "Repository URL: https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/"
+          echo "Package: ${DEB_FILENAME}"
+          echo "=========================================="
