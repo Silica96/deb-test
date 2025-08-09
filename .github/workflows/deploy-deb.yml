@@ -52,7 +52,7 @@ jobs:
         uses: morph027/apt-repo-action@v2
         with:
           repo-name: deb-test
-          scan-dir:.
+          scan-dir: .
           signing-key: ${{ secrets.GPG_PRIVATE_KEY }}
           codename: stable
           components: main
