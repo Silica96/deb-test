@@ -6,7 +6,7 @@ on:
       - main  # 'main' 브랜치에 푸시될 때 워크플로우 실행
 
 jobs:
-  # --- 잡 1: 데비안 패키지 빌드 ---
+  # --- 잡 1: 데비안 패키지 빌드 (변경 없음) ---
   build:
     name: Build Debian Package
     runs-on: ubuntu-latest
@@ -56,7 +56,7 @@ jobs:
           name: deb-package
           path: ${{ steps.build_package.outputs.deb_filename }}
 
-  # --- 잡 2: APT 저장소 배포 (이전과 동일) ---
+  # --- 잡 2: APT 저장소 배포 (셸 명령어로 수정됨) ---
   deploy:
     name: Deploy APT Repository
     needs: build  # 'build' 잡이 성공해야 실행됨
@@ -68,29 +68,52 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout repository for public key
-        uses: actions/checkout@v4
-
       - name: Download.deb artifact
         uses: actions/download-artifact@v4
         with:
           name: deb-package
 
-      - name: Create APT Repository
-        uses: morph027/apt-repo-action@v2
+      - name: Install reprepro
+        run: sudo apt-get update && sudo apt-get install -y reprepro
+
+      - name: Import GPG Key
+        id: import_gpg
+        uses: crazy-max/ghaction-import-gpg@v6
         with:
-          scan-dir: .
-          signing-key: ${{ secrets.GPG_PRIVATE_KEY }}
-          codename: stable
-          components: main
-          architectures: all
-          import-from-repo-url: |
-            deb-all https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ stable main
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          # 키에 암호가 있는 경우 아래 줄의 주석을 해제하고 GitHub Secret에 GPG_PASSPHRASE를 추가하세요.
+          # passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Create repository using reprepro
+        run: |
+          # 최종적으로 GitHub Pages에 배포될 디렉토리를 생성합니다.
+          mkdir -p public_repo/conf
+
+          # reprepro 설정 파일을 동적으로 생성합니다.
+          # SignWith 값에 GitHub Secrets에서 가져온 GPG 키의 ID를 주입합니다.
+          cat <<EOF > public_repo/conf/distributions
+          Origin: ${{ github.repository_owner }}
+          Label: ${{ github.event.repository.name }}
+          Codename: stable
+          Components: main
+          Architectures: amd64 all
+          Description: APT repository for ${{ github.event.repository.name }}
+          SignWith: ${{ steps.import_gpg.outputs.keyid }}
+          EOF
+
+          echo "--- Generated distributions file: ---"
+          cat public_repo/conf/distributions
+          echo "------------------------------------"
+
+          # 다운로드한 .deb 패키지를 저장소에 추가합니다.
+          # reprepro는 자동으로 pool과 dists 디렉토리를 생성하고 메타데이터 파일을 업데이트 및 서명합니다.
+          reprepro --basedir ./public_repo -V includedeb stable ./*.deb
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'apt-repo/repo'
+          # reprepro가 생성한 디렉토리 전체를 아티팩트로 업로드합니다.
+          path: './public_repo'
 
       - name: Deploy to GitHub Pages
         id: deployment
