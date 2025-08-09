@@ -18,7 +18,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          path: source  # 소스 코드를 source 디렉토리에 체크아웃
+          path: source
         
       # 2. 필요한 도구 설치
       - name: Install dependencies
@@ -84,14 +84,15 @@ jobs:
           # 환경변수 설정
           echo "DEB_FILENAME=${DEB_FILENAME}" >> $GITHUB_ENV
           echo "PACKAGE_NAME=${PACKAGE_NAME}" >> $GITHUB_ENV
+          echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> $GITHUB_ENV
           
-      # 5. gh-pages 브랜치 체크아웃 (별도 디렉토리)
+      # 5. gh-pages 브랜치 체크아웃
       - name: Checkout gh-pages branch
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: gh-pages
-        continue-on-error: true  # 브랜치가 없을 수도 있음
+        continue-on-error: true
         
       # 6. gh-pages 디렉토리 초기화 (필요시)
       - name: Initialize gh-pages directory
@@ -105,14 +106,14 @@ jobs:
             cd ..
           fi
           
-      # 7. APT 저장소 생성/업데이트
-      - name: Create/Update APT repository
+      # 7. APT 저장소 업데이트 (이전 버전 유지)
+      - name: Update APT repository (keeping old versions)
         working-directory: gh-pages
         run: |
           #!/bin/bash
           set -e
           
-          echo "=== Setting up APT repository ==="
+          echo "=== Updating APT repository ==="
           
           # .deb 파일 복사
           cp ../${DEB_FILENAME} .
@@ -120,7 +121,7 @@ jobs:
           # reprepro 설정 디렉토리 생성
           mkdir -p conf
           
-          # distributions 파일 생성
+          # distributions 파일 생성/업데이트
           cat > conf/distributions <<EOF
           Origin: ${GITHUB_REPOSITORY_OWNER}
           Label: ${GITHUB_REPOSITORY##*/}
@@ -131,90 +132,209 @@ jobs:
           SignWith: ${{ steps.import_gpg.outputs.keyid }}
           EOF
           
-          # 이전 저장소 상태 정리
-          if [ -d "db" ] || [ -d "dists" ] || [ -d "pool" ]; then
-            echo "Cleaning previous repository state..."
-            rm -rf db dists pool
+          # options 파일 생성 (verbose 출력)
+          cat > conf/options <<EOF
+          verbose
+          basedir .
+          EOF
+          
+          # 저장소가 이미 존재하는지 확인
+          if [ -d "pool" ] && [ -d "dists" ]; then
+            echo "Repository exists, adding new version..."
+            # 새 패키지 추가 (이전 버전은 유지)
+            reprepro -V includedeb stable "${DEB_FILENAME}"
+          else
+            echo "Creating new repository..."
+            # 새 저장소 생성
+            reprepro -V includedeb stable "${DEB_FILENAME}"
           fi
           
-          # 패키지 추가
-          echo "Adding package to repository..."
-          reprepro -V includedeb stable "${DEB_FILENAME}"
+          # 저장소 상태 확인
+          echo ""
+          echo "=== Repository Status ==="
+          reprepro list stable
+          echo ""
           
-          # 저장소 export
-          reprepro -V export
+          # 오래된 버전 제거 옵션 (선택적)
+          # 최대 3개 버전만 유지하려면 아래 주석 해제
+          # echo "Removing old versions (keeping last 3)..."
+          # reprepro --delete clearvanished
+          # reprepro deleteunreferenced
           
-          echo "Repository created/updated successfully"
-          
-      # 8. Public GPG 키 추가
+      # 8. Public GPG 키 내보내기
       - name: Export public GPG key
         working-directory: gh-pages
         run: |
+          echo "Exporting GPG public key..."
           gpg --armor --export ${{ steps.import_gpg.outputs.keyid }} > public.key
-          echo "Public GPG key exported"
           
-      # 9. README 및 index.html 생성
-      - name: Create documentation
+          if [ ! -s public.key ]; then
+            echo "ERROR: public.key is empty!"
+            gpg --armor --export > public.key
+          fi
+          
+          echo "Public key file size: $(wc -c < public.key) bytes"
+          
+      # 9. 문서 업데이트
+      - name: Update documentation
         working-directory: gh-pages
         run: |
-          # README.md 생성
+          # 현재 저장소의 모든 패키지 목록 가져오기
+          PACKAGE_LIST=$(reprepro list stable | awk '{print $2}' | sort -u)
+          
+          # README.md 업데이트
           cat > README.md <<EOF
           # APT Repository for ${GITHUB_REPOSITORY##*/}
           
           ## Installation
           
+          ### Add GPG key and repository
           \`\`\`bash
-          # Add GPG key
+          # Modern way (Ubuntu 22.04+, Debian 11+)
+          curl -fsSL https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/public.key | sudo gpg --dearmor -o /etc/apt/keyrings/${GITHUB_REPOSITORY##*/}.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/${GITHUB_REPOSITORY##*/}.gpg] https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/ stable main" | sudo tee /etc/apt/sources.list.d/${GITHUB_REPOSITORY##*/}.list
+          
+          # Legacy way (older systems)
           curl -fsSL https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/public.key | sudo apt-key add -
-          
-          # Add repository
           echo "deb https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/ stable main" | sudo tee /etc/apt/sources.list.d/${GITHUB_REPOSITORY##*/}.list
+          \`\`\`
           
-          # Install package
+          ### Install package
+          \`\`\`bash
           sudo apt update
           sudo apt install ${PACKAGE_NAME}
+          \`\`\`
+          
+          ### Install specific version
+          \`\`\`bash
+          # List available versions
+          apt-cache madison ${PACKAGE_NAME}
+          
+          # Install specific version
+          sudo apt install ${PACKAGE_NAME}=VERSION
+          \`\`\`
+          
+          ## Available Packages
+          
+          \`\`\`
+          $(reprepro list stable)
           \`\`\`
           
           Last updated: $(date)
           EOF
           
-          # index.html 생성
+          # index.html 업데이트
           cat > index.html <<EOF
           <!DOCTYPE html>
           <html>
           <head>
               <title>APT Repository - ${GITHUB_REPOSITORY##*/}</title>
               <style>
-                  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 40px 20px; }
-                  pre { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow-x: auto; }
-                  code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; }
-                  h1 { border-bottom: 1px solid #e1e4e8; padding-bottom: 10px; }
+                  body { 
+                      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+                      max-width: 900px; 
+                      margin: 0 auto; 
+                      padding: 40px 20px; 
+                      background: #f5f5f5;
+                  }
+                  .container {
+                      background: white;
+                      border-radius: 8px;
+                      padding: 30px;
+                      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                  }
+                  pre { 
+                      background: #f6f8fa; 
+                      padding: 16px; 
+                      border-radius: 6px; 
+                      overflow-x: auto;
+                      border: 1px solid #e1e4e8;
+                  }
+                  code { 
+                      background: #f6f8fa; 
+                      padding: 2px 6px; 
+                      border-radius: 3px;
+                      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+                  }
+                  h1 { 
+                      border-bottom: 2px solid #e1e4e8; 
+                      padding-bottom: 10px;
+                      color: #24292e;
+                  }
+                  h2 {
+                      color: #24292e;
+                      margin-top: 30px;
+                  }
+                  .package-info {
+                      background: #f0f9ff;
+                      border: 1px solid #0969da;
+                      border-radius: 6px;
+                      padding: 15px;
+                      margin: 20px 0;
+                  }
+                  .version-list {
+                      background: #f6f8fa;
+                      border-radius: 6px;
+                      padding: 15px;
+                      margin: 15px 0;
+                  }
+                  a {
+                      color: #0969da;
+                      text-decoration: none;
+                  }
+                  a:hover {
+                      text-decoration: underline;
+                  }
               </style>
           </head>
           <body>
-              <h1>📦 APT Repository</h1>
-              <p>Debian package repository for <strong>${GITHUB_REPOSITORY##*/}</strong></p>
-              
-              <h2>Quick Setup</h2>
-              <pre><code># Add GPG key
-          curl -fsSL https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/public.key | sudo apt-key add -
+              <div class="container">
+                  <h1>📦 APT Repository</h1>
+                  <p>Debian package repository for <strong>${GITHUB_REPOSITORY##*/}</strong></p>
+                  
+                  <div class="package-info">
+                      <strong>📋 Latest Version:</strong> ${PACKAGE_VERSION}<br>
+                      <strong>📦 Package Name:</strong> ${PACKAGE_NAME}<br>
+                      <strong>🔄 Total Versions:</strong> $(reprepro list stable | wc -l)
+                  </div>
+                  
+                  <h2>🚀 Quick Setup</h2>
+                  <pre><code># For Ubuntu 22.04+ / Debian 11+
+          curl -fsSL https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/public.key | \\
+            sudo gpg --dearmor -o /etc/apt/keyrings/${GITHUB_REPOSITORY##*/}.gpg
           
-          # Add repository  
-          echo "deb https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/ stable main" | sudo tee /etc/apt/sources.list.d/${GITHUB_REPOSITORY##*/}.list
+          echo "deb [signed-by=/etc/apt/keyrings/${GITHUB_REPOSITORY##*/}.gpg] \\
+            https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/ stable main" | \\
+            sudo tee /etc/apt/sources.list.d/${GITHUB_REPOSITORY##*/}.list
           
-          # Install package
           sudo apt update
           sudo apt install ${PACKAGE_NAME}</code></pre>
-              
-              <h2>Browse Repository</h2>
-              <ul>
-                  <li><a href="pool/">📦 Package Pool</a></li>
-                  <li><a href="dists/">📋 Distributions</a></li>
-                  <li><a href="public.key">🔑 GPG Public Key</a></li>
-              </ul>
-              
-              <hr>
-              <p><small>Last updated: $(date)</small></p>
+                  
+                  <h2>📦 Available Versions</h2>
+                  <div class="version-list">
+                      <pre>$(reprepro list stable)</pre>
+                  </div>
+                  
+                  <h2>🔧 Version Management</h2>
+                  <pre><code># List available versions
+          apt-cache madison ${PACKAGE_NAME}
+          
+          # Install specific version
+          sudo apt install ${PACKAGE_NAME}=1.0-1
+          
+          # Downgrade to older version
+          sudo apt install ${PACKAGE_NAME}=0.9-1 --allow-downgrades</code></pre>
+                  
+                  <h2>📁 Browse Repository</h2>
+                  <ul>
+                      <li><a href="pool/">📦 Package Pool</a> - All .deb files</li>
+                      <li><a href="dists/">📋 Distributions</a> - Repository metadata</li>
+                      <li><a href="public.key">🔑 GPG Public Key</a> - Repository signing key</li>
+                  </ul>
+                  
+                  <hr>
+                  <p><small>Last updated: $(date)</small></p>
+              </div>
           </body>
           </html>
           EOF
@@ -223,11 +343,17 @@ jobs:
       - name: Commit and push to gh-pages
         working-directory: gh-pages
         run: |
+          echo "=== Files to be committed ==="
+          ls -la
+          
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
           git add .
-          git commit -m "Update APT repository: ${DEB_FILENAME}" || echo "No changes to commit"
+          git status
+          
+          # 커밋 메시지에 버전 정보 포함
+          git commit -m "Add ${PACKAGE_NAME} version ${PACKAGE_VERSION}" || echo "No changes to commit"
           
           git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git 2>/dev/null || true
           git push -f origin gh-pages
@@ -240,7 +366,7 @@ jobs:
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages" \
             -d '{"source":{"branch":"gh-pages","path":"/"}}' \
-            2>/dev/null || echo "GitHub Pages might already be enabled"
+            2>/dev/null || echo "GitHub Pages already enabled"
             
       # 12. 완료 메시지
       - name: Display completion message
@@ -248,6 +374,11 @@ jobs:
           echo "=========================================="
           echo "✅ Deployment Complete!"
           echo "=========================================="
-          echo "Repository URL: https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/"
-          echo "Package: ${DEB_FILENAME}"
+          echo "📦 Package: ${DEB_FILENAME}"
+          echo "📋 Version: ${PACKAGE_VERSION}"
+          echo "🌐 Repository: https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY##*/}/"
+          echo ""
+          echo "📝 Install commands:"
+          echo "  sudo apt update"
+          echo "  sudo apt install ${PACKAGE_NAME}"
           echo "=========================================="
