@@ -3,34 +3,35 @@
 <head>
     <title>APT Repository - deb-test</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        pre { background: #f4f4f4; padding: 10px; border-radius: 5px; }
-        code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 40px 20px; }
+        pre { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow-x: auto; }
+        code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; }
+        h1 { border-bottom: 1px solid #e1e4e8; padding-bottom: 10px; }
     </style>
 </head>
 <body>
-    <h1>APT Repository for deb-test</h1>
+    <h1>📦 APT Repository</h1>
+    <p>Debian package repository for <strong>deb-test</strong></p>
     
     <h2>Quick Setup</h2>
-    <pre>
-# Add GPG key
+    <pre><code># Add GPG key
 curl -fsSL https://Silica96.github.io/deb-test/public.key | sudo apt-key add -
 
-# Add repository
+# Add repository  
 echo "deb https://Silica96.github.io/deb-test/ stable main" | sudo tee /etc/apt/sources.list.d/deb-test.list
 
 # Install package
 sudo apt update
-sudo apt install 
-    </pre>
+sudo apt install test</code></pre>
     
-    <h2>Browse</h2>
+    <h2>Browse Repository</h2>
     <ul>
-        <li><a href="pool/">Package Pool</a></li>
-        <li><a href="dists/">Distributions</a></li>
-        <li><a href="public.key">GPG Public Key</a></li>
+        <li><a href="pool/">📦 Package Pool</a></li>
+        <li><a href="dists/">📋 Distributions</a></li>
+        <li><a href="public.key">🔑 GPG Public Key</a></li>
     </ul>
     
-    <p><small>Last updated: Sat Aug  9 08:42:04 UTC 2025</small></p>
+    <hr>
+    <p><small>Last updated: Sat Aug  9 08:46:52 UTC 2025</small></p>
 </body>
 </html>

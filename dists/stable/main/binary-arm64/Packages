@@ -6,9 +6,9 @@ Priority: optional
 Section: utils
 Filename: pool/main/t/test/test_1.0-1_all.deb
 Size: 632
-SHA256: 45d2e9dafa25692a86944c3899647a151981219bce84c0a1ba60d69bffbe4b89
-SHA1: 81cf7e7c35211cdf818aa686ffad589e67d05a73
-MD5sum: 272882e90ea47a6a80c2170989cd1cca
+SHA256: 609d589321c4eb87a17afe825a4aafa5175b3818af2e259bf4a28cdde0ccb59f
+SHA1: 2f99822a3d94df671392757e5bd96038000af586
+MD5sum: ac493c0c74b536d11309d7ff02a09c8e
 Description: This is a test application
  for packaging
 
