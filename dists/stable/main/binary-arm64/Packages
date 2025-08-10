@@ -1,14 +1,14 @@
 Package: test
-Version: 1.0-4
+Version: 1.0-5
 Architecture: all
 Maintainer: test <test@test.com>
 Priority: optional
 Section: utils
-Filename: pool/main/t/test/test_1.0-4_all.deb
-Size: 634
-SHA256: 34a51266f27d4c31f960a195e0db6739ea0af0e10a5f7a12e25409a017a9bcd9
-SHA1: 2fe56c7925eb0f5c82aca9347f0343177b2cb1d8
-MD5sum: b732dba05ccf6829a8d991c60a88cc19
+Filename: pool/main/t/test/test_1.0-5_all.deb
+Size: 632
+SHA256: de3491818876a87fd5b964db0f45b50d95d41857578ffa279c6fbaba2565f2d0
+SHA1: 856e058b404f6241dd6527ff79b942bead3c0e25
+MD5sum: 60f479eaa925fb1bfd09ee57e404b76b
 Description: This is a test application
  for packaging
 

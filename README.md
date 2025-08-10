@@ -31,10 +31,10 @@ sudo apt install test=VERSION
 ## Available Packages
 
 ```
-stable|main|amd64: test 1.0-4
-stable|main|arm64: test 1.0-4
-stable|main|armhf: test 1.0-4
-stable|main|i386: test 1.0-4
+stable|main|amd64: test 1.0-5
+stable|main|arm64: test 1.0-5
+stable|main|armhf: test 1.0-5
+stable|main|i386: test 1.0-5
 ```
 
-Last updated: Sat Aug  9 09:50:15 UTC 2025
+Last updated: Sun Aug 10 05:17:31 UTC 2025
